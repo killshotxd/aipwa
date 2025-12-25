@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snapdragon AI Companion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- WebLLM Module -->
+    <script type="module">
+        import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+        let engine;
+        const modelId = "Phi-3-mini-4k-instruct-q4f16_1-MLC"; // Fast for Snapdragon 8s Gen 3
+
+        const status = document.getElementById("status");
+        const logArea = document.getElementById("logArea");
+        const summaryArea = document.getElementById("summaryArea");
+
+        // 1. Initialize AI Engine
+        async function initAI() {
+            status.innerText = "⚡ Initializing Snapdragon NPU...";
+            try {
+                engine = await webllm.CreateMLCEngine(modelId, {
+                    initProgressCallback: (report) => {
+                        status.innerText = report.text;
+                    }
+                });
+                status.innerText = "🟢 AI Local & Ready";
+                document.getElementById("btnStart").disabled = false;
+            } catch (e) {
+                status.innerText = "❌ WebGPU error. Enable it in chrome://flags";
+                console.error(e);
+            }
+        }
+
+        // 2. Listening Logic
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.continuous = true;
+        recognition.interimResults = false;
+
+        recognition.onresult = (event) => {
+            const text = event.results[event.results.length - 1][0].transcript;
+            addNote(text);
+        };
+
+        function addNote(text) {
+            const time = new Date().toLocaleTimeString();
+            const noteEl = document.createElement("div");
+            noteEl.className = "p-2 border-b border-gray-700 text-sm";
+            noteEl.innerHTML = `<span class="text-blue-400">[${time}]</span> ${text}`;
+            logArea.prepend(noteEl);
+
+            // Logic for Urgent Reminders
+            if (text.toLowerCase().includes("urgent") || text.toLowerCase().includes("remind me")) {
+                new Notification("🚨 URGENT TASK", { body: text });
+                noteEl.classList.add("bg-red-900/30");
+            }
+            
+            // Save to LocalStorage
+            const history = JSON.parse(localStorage.getItem("ai_notes") || "[]");
+            history.push({time, text});
+            localStorage.setItem("ai_notes", JSON.stringify(history));
+        }
+
+        // 3. Summarization Logic (Using your GPU)
+        async function summarizeDay() {
+            status.innerText = "🧠 AI is thinking...";
+            const history = JSON.parse(localStorage.getItem("ai_notes") || "[]");
+            const context = history.map(h => h.text).join(". ");
+            
+            const messages = [
+                { role: "system", content: "Summarize these notes into bullet points. Highlight urgent tasks." },
+                { role: "user", content: context }
+            ];
+
+            const reply = await engine.chat.completions.create({ messages });
+            summaryArea.innerText = reply.choices[0].message.content;
+            status.innerText = "🟢 AI Local & Ready";
+        }
+
+        // 4. Camera (Watching)
+        async function startCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+            document.getElementById("videoFeed").srcObject = stream;
+        }
+
+        window.startApp = () => {
+            recognition.start();
+            startCamera();
+            Notification.requestPermission();
+            document.getElementById("btnStart").classList.add("hidden");
+            document.getElementById("activeUI").classList.remove("hidden");
+        };
+
+        window.runSummary = summarizeDay;
+
+        // Auto-load AI on page load
+        initAI();
+    </script>
+</head>
+<body class="bg-black text-gray-100 min-h-screen font-sans p-4">
+
+    <!-- Header -->
+    <div class="max-w-md mx-auto">
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-xl font-bold tracking-tighter text-blue-500">NORD AI-8s</h1>
+            <div id="status" class="text-[10px] text-gray-400 italic">Loading NPU...</div>
+        </header>
+
+        <!-- Video Feed (Small/Hidden) -->
+        <video id="videoFeed" autoplay muted playsinline class="w-full h-32 object-cover rounded-xl mb-4 border border-gray-800"></video>
+
+        <!-- Interaction Button -->
+        <button id="btnStart" disabled onclick="startApp()" class="w-full py-4 bg-blue-600 rounded-2xl font-bold text-lg disabled:opacity-50 transition-all">
+            ACTIVATE COMPANION
+        </button>
+
+        <div id="activeUI" class="hidden space-y-4">
+            <!-- Summary Section -->
+            <div class="bg-gray-900 p-4 rounded-2xl border border-gray-800">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-sm font-semibold text-green-400 uppercase">Daily Recap</h2>
+                    <button onclick="runSummary()" class="text-xs bg-gray-800 px-2 py-1 rounded">Generate</button>
+                </div>
+                <div id="summaryArea" class="text-sm text-gray-300">No summary yet. Keep talking!</div>
+            </div>
+
+            <!-- Note Logs -->
+            <div class="bg-gray-900 p-4 rounded-2xl border border-gray-800 h-64 overflow-y-auto">
+                <h2 class="text-sm font-semibold text-blue-400 uppercase mb-2">Live Logs</h2>
+                <div id="logArea"></div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
